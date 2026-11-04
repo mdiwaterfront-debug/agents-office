@@ -38,10 +38,16 @@
   .plan{padding-left:18px;color:var(--dim);font-size:13px}
   .progress{height:8px;background:var(--panel);border-radius:99px;overflow:hidden;margin-top:8px}
   .progress>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--good));width:0%;transition:width .4s}
-  #report{white-space:pre-wrap;font-size:14px;line-height:1.7;max-height:50vh;overflow-y:auto}
+  #report{font-size:17px;line-height:1.9;max-height:62vh;overflow-y:auto;color:var(--txt)}
+  #report b,#report strong{color:#fff}
+  #report h4{font-size:19px;margin:16px 0 8px;color:#cfe0ff;border-bottom:1px solid var(--line);padding-bottom:4px}
+  #report .li{display:block;padding-left:14px;position:relative;margin:4px 0}
+  #report .li::before{content:'•';position:absolute;left:0;color:var(--accent)}
+  #report a{color:var(--accent)}
+  #report hr{border:none;border-top:1px solid var(--line);margin:12px 0}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9}
   .modal.show{display:flex}
-  .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;width:min(640px,92vw)}
+  .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px 28px;width:min(880px,95vw);max-height:92vh;overflow-y:auto}
   .pill{font-size:12px;color:var(--dim)}
   .del{background:none;border:none;color:var(--bad);cursor:pointer;font-size:16px;padding:2px 6px}
   label{font-size:13px;color:var(--dim);display:block;margin:10px 0 4px}
@@ -673,10 +679,25 @@ async function relayExecute(emp, task, prev){
 
 // ================= 成果視窗（含下一步指示） =================
 let currentItem = null;
+// 簡易 Markdown 渲染：粗體、標題、bullet、連結、分隔線
+function renderMd(text){
+  const t = esc(text);
+  const inline = s => s
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/(https?:\/\/[^\s）)]+)/g, '<a href="$1" target="_blank">$1</a>');
+  return t.split('\n').map(line => {
+    const l = line.trimEnd();
+    if (/^\s*$/.test(l)) return '<div style="height:8px"></div>';
+    if (/^#{1,4}\s*/.test(l)) return `<h4>${inline(l.replace(/^#{1,4}\s*/, ''))}</h4>`;
+    if (/^---+$/.test(l)) return '<hr>';
+    if (/^(\s*)([-*•○]|\d+\.)\s+/.test(l)) return `<span class="li">${inline(l.replace(/^(\s*)([-*•○]|\d+\.)\s+/, ''))}</span>`;
+    return `<div>${inline(l)}</div>`;
+  }).join('');
+}
 function showReport(item, title){
   currentItem = item;
   $('#modalTitle').textContent = title || `${item.employee} 的工作成果`;
-  $('#report').textContent = item.result;
+  $('#report').innerHTML = renderMd(item.result);
   $('#followUp').value = '';
   modal.classList.add('show');
 }
