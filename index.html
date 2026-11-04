@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agents Office</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171f30; --panel2:#1e2940; --line:#2b3a58;
+    --txt:#e8eefc; --dim:#8ea2c8; --accent:#5b8cff; --good:#3ddc97; --warn:#ffb454; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--txt);font-family:"Noto Sans TC","Microsoft JhengHei",sans-serif;display:flex;height:100vh;overflow:hidden}
+  #stage{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:12px;min-width:0}
+  canvas{background:#0b0f1a;border:1px solid var(--line);border-radius:12px;max-width:100%}
+  #statusbar{font-size:13px;color:var(--dim)}
+  #side{width:360px;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column}
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tab{flex:1;padding:12px;text-align:center;cursor:pointer;color:var(--dim);font-size:14px;border-bottom:2px solid transparent}
+  .tab.active{color:var(--txt);border-bottom-color:var(--accent)}
+  .pane{flex:1;overflow-y:auto;padding:14px;display:none}
+  .pane.active{display:block}
+  h3{font-size:14px;color:var(--dim);margin:14px 0 6px;letter-spacing:1px}
+  input,textarea,select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:9px 10px;font-size:14px;font-family:inherit}
+  textarea{resize:vertical;min-height:70px}
+  button{background:var(--accent);border:none;color:#fff;border-radius:8px;padding:9px 14px;cursor:pointer;font-size:14px;font-family:inherit}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--txt)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:8px;margin-top:8px}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px;margin-top:10px}
+  .emp{display:flex;align-items:center;gap:10px;padding:8px;border-bottom:1px solid var(--line)}
+  .dot{width:14px;height:14px;border-radius:50%;flex-shrink:0}
+  .emp small{color:var(--dim)}
+  .badge{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--panel);border:1px solid var(--line);color:var(--dim)}
+  .badge.on{color:var(--good);border-color:var(--good)}
+  .badge.busy{color:var(--warn);border-color:var(--warn)}
+  .suggest{border-left:3px solid var(--accent)}
+  .plan{padding-left:18px;color:var(--dim);font-size:13px}
+  .progress{height:8px;background:var(--panel);border-radius:99px;overflow:hidden;margin-top:8px}
+  .progress>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--good));width:0%;transition:width .4s}
+  #report{white-space:pre-wrap;font-size:14px;line-height:1.7;max-height:50vh;overflow-y:auto}
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9}
+  .modal.show{display:flex}
+  .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;width:min(640px,92vw)}
+  .pill{font-size:12px;color:var(--dim)}
+  .del{background:none;border:none;color:var(--bad);cursor:pointer;font-size:16px;padding:2px 6px}
+  label{font-size:13px;color:var(--dim);display:block;margin:10px 0 4px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv" width="980" height="560"></canvas>
+  <div id="statusbar">🖥️ 工作區（左）　🛋️ 娛樂室（右）　·　點「任務」分頁交付工作</div>
+</div>
+<div id="side">
+  <div class="tabs">
+    <div class="tab active" data-t="task">📋 任務</div>
+    <div class="tab" data-t="archive">📁 成果</div>
+    <div class="tab" data-t="staff">👥 員工</div>
+    <div class="tab" data-t="settings">⚙️ 設定</div>
+  </div>
+
+  <div class="pane active" id="pane-task">
+    <h3>交付新任務</h3>
+    <textarea id="taskInput" placeholder="例：整理今日 AI 產業重點新聞並寫一段 200 字摘要"></textarea>
+    <label>補充資料（選填，貼給執行員工參考）</label>
+    <textarea id="ctxInput" placeholder="可貼上新聞原文、數據、連結等"></textarea>
+    <label>上傳文件交給員工整理/修改（txt / md / csv / json / html / pdf / docx）</label>
+    <input id="fileInput" type="file" multiple accept=".txt,.md,.csv,.json,.html,.pdf,.docx" style="padding:6px">
+    <div id="fileList"></div>
+    <div class="row">
+      <button id="btnAssign">① 問 AI 經理</button>
+    </div>
+    <div id="suggestBox"></div>
+    <div id="reportBox"></div>
+  </div>
+
+  <div class="pane" id="pane-archive">
+    <h3>工作成果存檔（本機保存最近 50 筆）</h3>
+    <div id="archiveList"></div>
+  </div>
+
+  <div class="pane" id="pane-staff">
+    <h3>在職員工</h3>
+    <div id="empList"></div>
+    <h3>新增員工</h3>
+    <input id="newName" placeholder="員工名稱，例：法務顧問">
+    <label>角色設定（System Prompt）</label>
+    <textarea id="newRole" placeholder="你是法務顧問，負責審閱合約……"></textarea>
+    <label>使用 AI（不選則跟隨全局設定）</label>
+    <select id="newProvider">
+      <option value="">跟隨全局（預設）</option>
+      <option value="deepseek">DeepSeek</option>
+      <option value="kimi">Kimi（Moonshot）</option>
+      <option value="gemini">Gemini</option>
+    </select>
+    <label>代表色</label>
+    <input id="newColor" type="color" value="#5b8cff" style="height:40px;padding:4px">
+    <div class="row"><button id="btnAddEmp">＋ 新增員工</button>
+    <button class="ghost" id="btnSyncEmp" title="將員工清單同步到 Apps Script 後端">同步到後端</button></div>
+  </div>
+
+  <div class="pane" id="pane-settings">
+    <h3>後端連線</h3>
+    <label>Apps Script Web App URL（/exec）</label>
+    <input id="apiUrl" placeholder="https://script.google.com/macros/s/…/exec">
+    <label>預設 AI 供應商</label>
+    <select id="provider">
+      <option value="deepseek">DeepSeek（經理預設）</option>
+      <option value="kimi">Kimi（Moonshot）</option>
+      <option value="gemini">Gemini</option>
+    </select>
+    <div class="row">
+      <button id="btnPing">測試連線</button>
+      <button class="ghost" id="btnDemo">切換演示模式</button>
+    </div>
+    <div class="card"><span class="pill" id="connStatus">未連線（演示模式：本機模擬 AI 回覆）</span></div>
+    <div id="provStatus"></div>
+    <h3>說明</h3>
+    <div class="card pill" style="line-height:1.8">
+      1. 部署 Apps Script（見 Code.gs 與安裝說明）後貼上 URL。<br>
+      2. API Key 存在 Apps Script 的「指令碼屬性」，此頁面不經手金鑰。<br>
+      3. 新增 AI 供應商：在 Code.gs 的 PROVIDERS 加一筆即可。<br>
+      4. 未連線時為演示模式，員工仍會動、任務用模擬回覆。
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="relayModal"><div class="box">
+  <h3 style="margin-top:0">🔁 接力給另一位員工</h3>
+  <label>接棒員工</label>
+  <select id="relayEmp"></select>
+  <label>交辦事項</label>
+  <textarea id="relayTask"></textarea>
+  <div class="row" style="justify-content:flex-end">
+    <button class="ghost" onclick="relayModal.classList.remove('show')">取消</button>
+    <button id="btnRelayGo">開始接力</button>
+  </div>
+</div></div>
+
+<div class="modal" id="modal"><div class="box">
+  <h3 id="modalTitle" style="margin-top:0">工作成果</h3>
+  <div id="report"></div>
+  <div class="row" style="justify-content:flex-end"><button onclick="modal.classList.remove('show')">關閉</button></div>
+</div></div>
+<script>
+// ================= 全域狀態 =================
+const $ = s => document.querySelector(s);
+const cv = $('#cv'), g = cv.getContext('2d');
+const state = {
+  apiUrl: localStorage.getItem('ao_apiUrl') || '',
+  provider: localStorage.getItem('ao_provider') || 'deepseek',
+  demo: localStorage.getItem('ao_demo') !== '0',
+  employees: JSON.parse(localStorage.getItem('ao_emps') || 'null') || [
+    { id:'news',    name:'新聞官',     color:'#ff9f43', role:'新聞搜尋與整理' },
+    { id:'analyst', name:'數據分析師', color:'#3ddc97', role:'數據解讀與報告' },
+    { id:'market',  name:'市場部員工', color:'#5b8cff', role:'市場研究企劃' },
+    { id:'writer',  name:'文案員工',   color:'#c86bff', role:'文案撰寫' },
+  ],
+  agents: [], tasks: []
+};
+
+// ================= 辦公室場景 =================
+// 工作區 x:0-560，娛樂室 x:580-980
+const DESKS = [ // 辦公桌+電腦（工作區）
+  {x:70,y:120},{x:220,y:120},{x:370,y:120},
+  {x:70,y:300},{x:220,y:300},{x:370,y:300},
+  {x:70,y:470},{x:220,y:470},{x:370,y:470},{x:145,y:200}
+];
+const REC_SPOTS = [ // 娛樂室站位
+  {x:660,y:180},{x:760,y:180},{x:880,y:200},{x:700,y:360},{x:850,y:400},{x:780,y:300},{x:910,y:320},{x:640,y:300}
+];
+const IDLE_LINES = ['今天好閒啊～','咖啡真好喝 ☕','中午吃什麼？','摸魚ing…','下週好想放假','這沙發真舒服','聽說有新專案？','追劇追到半夜','健身該排起來了','老闆不在吧？'];
+
+class Agent {
+  constructor(emp, i){
+    this.emp = emp;
+    this.desk = DESKS[i % DESKS.length];
+    this.x = this.desk.x; this.y = this.desk.y + 34;
+    this.tx = this.x; this.ty = this.y;
+    this.state = 'workIdle'; // workIdle | walking | working | rec | chatting
+    this.speed = 1.6;
+    this.progress = -1;      // -1 無任務
+    this.bubble = null; this.bubbleT = 0;
+    this.idleTimer = rand(400, 900); // 幀數後去娛樂室
+    this.workAnim = 0;
+  }
+  go(x, y, then){ this.tx = x; this.ty = y; this.state = 'walking'; this.after = then; }
+  update(){
+    if (this.state === 'walking'){
+      const dx = this.tx - this.x, dy = this.ty - this.y, d = Math.hypot(dx,dy);
+      if (d < 3){ this.x = this.tx; this.y = this.ty; const f = this.after; this.after = null; f && f(); }
+      else { this.x += dx/d*this.speed; this.y += dy/d*this.speed; }
+      return;
+    }
+    if (this.state === 'working'){ this.workAnim++; return; }
+    if (this.state === 'workIdle'){
+      if (--this.idleTimer <= 0){ // 去娛樂室摸魚
+        const s = REC_SPOTS[Math.floor(Math.random()*REC_SPOTS.length)];
+        this.go(s.x, s.y, () => {
+          this.state = 'rec'; this.idleTimer = rand(500, 1100);
+        });
+      }
+      return;
+    }
+    if (this.state === 'rec'){
+      if (--this.idleTimer <= 0){
+        if (Math.random() < 0.35){ // 找人聊天
+          const others = state.agents.filter(a => a !== this && a.state === 'rec');
+          if (others.length){
+            const o = others[Math.floor(Math.random()*others.length)];
+            this.go(o.x + 26, o.y, () => { this.chat(); o.chatReply(this); });
+            this.idleTimer = 400;
+          } else this.idleTimer = 200;
+        } else { // 回工位
+          this.go(this.desk.x, this.desk.y + 34, () => { this.state = 'workIdle'; this.idleTimer = rand(400, 900); });
+        }
+      }
+    }
+  }
+  chat(){ this.say(pick(IDLE_LINES), 260); }
+  chatReply(){ if (Math.random() < .7) this.say(pick(IDLE_LINES), 260); }
+  say(text, frames){ this.bubble = text; this.bubbleT = frames; }
+  draw(){
+    const {x, y} = this, c = this.emp.color;
+    // 影
+    g.fillStyle = 'rgba(0,0,0,.35)'; g.beginPath(); g.ellipse(x, y+16, 14, 5, 0, 0, 7); g.fill();
+    // 身體+頭
+    g.fillStyle = c; roundRect(x-10, y-4, 20, 20, 7); g.fill();
+    g.fillStyle = '#ffd9b3'; g.beginPath(); g.arc(x, y-12, 8, 0, 7); g.fill();
+    // 名牌
+    g.font = '11px "Noto Sans TC"'; g.textAlign = 'center';
+    g.fillStyle = 'rgba(0,0,0,.55)'; roundRect(x-26, y+20, 52, 16, 8); g.fill();
+    g.fillStyle = '#fff'; g.fillText(this.emp.name, x, y+32);
+    // 工作動畫：打字小手
+    if (this.state === 'working' && Math.floor(this.workAnim/14) % 2 === 0){
+      g.fillStyle = '#ffd9b3'; g.fillRect(x-14, y+4, 5, 5); g.fillRect(x+9, y+4, 5, 5);
+    }
+    // 進度條
+    if (this.progress >= 0){
+      g.fillStyle = 'rgba(0,0,0,.6)'; roundRect(x-24, y-34, 48, 8, 4); g.fill();
+      g.fillStyle = '#3ddc97'; roundRect(x-23, y-33, 46*this.progress, 6, 3); g.fill();
+    }
+    // 對話泡泡
+    if (this.bubbleT > 0){
+      this.bubbleT--;
+      g.font = '12px "Noto Sans TC"';
+      const w = g.measureText(this.bubble).width + 16;
+      g.fillStyle = 'rgba(255,255,255,.95)';
+      roundRect(x - w/2, y - 58, w, 22, 10); g.fill();
+      g.beginPath(); g.moveTo(x-5, y-36); g.lineTo(x+5, y-36); g.lineTo(x, y-29); g.fill();
+      g.fillStyle = '#333'; g.fillText(this.bubble, x, y-42);
+      if (this.bubbleT <= 0) this.bubble = null;
+    }
+  }
+}
+function rand(a,b){ return Math.floor(a + Math.random()*(b-a)); }
+function pick(a){ return a[Math.floor(Math.random()*a.length)]; }
+function roundRect(x,y,w,h,r){ g.beginPath(); g.roundRect(x,y,w,h,r); }
+
+function drawOffice(){
+  // 地板
+  g.fillStyle = '#141c2e'; g.fillRect(0,0,980,560);
+  // 工作區
+  g.fillStyle = '#1a2440'; g.fillRect(20,20,540,520);
+  g.strokeStyle = '#2b3a58'; g.lineWidth = 2; g.strokeRect(20,20,540,520);
+  label('🖥️ 工作區', 40, 46);
+  // 娛樂室
+  g.fillStyle = '#1e1a30'; g.fillRect(580,20,380,520);
+  g.strokeRect(580,20,380,520);
+  label('🛋️ 娛樂室', 600, 46);
+  // 隔間門
+  g.fillStyle = '#3ddc97'; g.fillRect(560,250,20,90);
+  label('門', 570, 300, 10);
+  // 辦公桌+電腦
+  for (const d of DESKS){
+    g.fillStyle = '#6b4f35'; roundRect(d.x-34, d.y-8, 68, 22, 4); g.fill();
+    // 螢幕（閃爍代表有人用）
+    const on = state.agents.some(a => a.state === 'working' && a.desk === d);
+    g.fillStyle = '#222'; g.fillRect(d.x-13, d.y-26, 26, 18);
+    g.fillStyle = on && Math.floor(Date.now()/350)%2 ? '#8fd3ff' : (on ? '#5b8cff' : '#31405f');
+    g.fillRect(d.x-11, d.y-24, 22, 14);
+  }
+  // 娛樂室物件：沙發、咖啡機、植物
+  g.fillStyle = '#8a4b6b'; roundRect(640,120,120,34,10); g.fill(); label('沙發', 700, 142, 11);
+  g.fillStyle = '#444'; roundRect(900,110,36,50,6); g.fill(); g.fillStyle = '#ffb454'; g.fillRect(906,122,10,10); label('咖啡機', 918, 178, 10);
+  g.fillStyle = '#2f7d4f'; g.beginPath(); g.arc(620, 480, 16, 0, 7); g.fill(); g.fillStyle = '#5b3a26'; g.fillRect(614, 494, 12, 14);
+  g.fillStyle = '#2f7d4f'; g.beginPath(); g.arc(930, 490, 16, 0, 7); g.fill(); g.fillStyle = '#5b3a26'; g.fillRect(924, 504, 12, 14);
+}
+function label(t,x,y,s=14){ g.font = `${s}px "Noto Sans TC"`; g.textAlign='center'; g.fillStyle='#8ea2c8'; g.fillText(t,x,y); }
+
+// ================= 主迴圈 =================
+function rebuildAgents(){
+  const old = new Map(state.agents.map(a => [a.emp.id, a]));
+  state.agents = state.employees.map((e, i) => old.get(e.id) || new Agent(e, i));
+}
+rebuildAgents();
+function loop(){
+  drawOffice();
+  for (const a of state.agents){ a.update(); a.draw(); }
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+<script>
+// ================= 後端 API =================
+async function api(action, payload = {}){
+  if (state.demo || !state.apiUrl) return demoApi(action, payload);
+  try{
+    const r = await fetch(state.apiUrl, {
+      method:'POST', headers:{'Content-Type':'text/plain'}, // 避免 CORS preflight
+      body: JSON.stringify({ action, provider: state.provider, ...payload })
+    });
+    return await r.json();
+  }catch(e){ return { ok:false, error:'連線失敗：' + e.message }; }
+}
+
+// ---- 演示模式（本機模擬）----
+const DEMO_OUT = {
+  news: '📰 新聞摘要（演示資料）\n\n1. AI 大模型競爭白熱化：多家廠商發表新版本，推論成本持續下降。\n2. 企業導入 AI Agent 加速，自動化辦公成為焦點。\n3. 各國監管框架陸續出台，合規成為採購關鍵考量。\n\n※ 演示模式產出，連接後端後將由新聞官以 DeepSeek 生成真實整理。',
+  analyst: '📊 分析報告（演示資料）\n\n關鍵指標：\n| 指標 | 數值 | 趨勢 |\n|---|---|---|\n| 需求熱度 | 高 | ↑ |\n| 競爭強度 | 中 | → |\n| 時機評分 | 8/10 | ↑ |\n\n結論：建議於本季內啟動，先以小規模試行驗證假設。\n\n※ 演示模式產出。',
+  market: '📣 市場企劃（演示資料）\n\n目標受眾：25-40 歲數位工作者\n策略：內容行銷＋社群擴散\n時程：第 1 週預熱 → 第 2-3 週主推 → 第 4 週再行銷\nKPI：觸及 10 萬、轉換率 3%\n\n※ 演示模式產出。',
+  writer: '✍️ 文案（演示資料）\n\n標題：把重複的工作，交給不喊累的同事\n\n內文：當別人還在複製貼上，你的 AI 團隊已經交出第一份草稿。不是取代，而是讓你專注在只有你能做的事上。\n\nCTA：立即體驗 →\n\n※ 演示模式產出。'
+};
+function demoApi(action, p){
+  return new Promise(res => setTimeout(() => {
+    if (action === 'ping') res({ ok:true, demo:true, providers:{deepseek:{name:'DeepSeek',hasKey:false},kimi:{name:'Kimi (Moonshot)',hasKey:false},gemini:{name:'Gemini',hasKey:false}}, employees:[] });
+    else if (action === 'assign'){
+      const kw = p.task;
+      let pickId = 'writer';
+      if (/新聞|時事|頭條/.test(kw)) pickId = 'news';
+      else if (/數據|分析|報表|指標/.test(kw)) pickId = 'analyst';
+      else if (/市場|行銷|推廣|競品/.test(kw)) pickId = 'market';
+      if (!state.employees.some(e => e.id === pickId)) pickId = state.employees[0].id;
+      const emp = state.employees.find(e => e.id === pickId);
+      res({ ok:true, demo:true, suggestion:{ assigneeId:pickId, reason:`任務性質最接近「${emp.name}」的職責`, plan:['理解需求與蒐集素材','產出初稿','校對潤飾後交付'], estimatedMinutes:5 } });
+    }
+    else if (action === 'execute'){
+      const emp = state.employees.find(e => e.id === p.employeeId);
+      res({ ok:true, demo:true, employee:emp.name, result: DEMO_OUT[p.employeeId] || `【${emp.name}】已完成任務（演示模式）：\n\n${p.task}\n\n此為模擬產出。連接 Apps Script 後端並設定 API Key 後，將依角色設定生成真實成果。` });
+    }
+    else res({ ok:false, error:'demo: unknown action' });
+  }, 900));
+}
+
+// ================= 任務流程 =================
+let pendingSuggestion = null;
+$('#btnAssign').onclick = async () => {
+  const task = $('#taskInput').value.trim();
+  if (!task) return alert('請先輸入任務');
+  const btn = $('#btnAssign'); btn.disabled = true; btn.textContent = '經理思考中…';
+  $('#suggestBox').innerHTML = '';
+  const r = await api('assign', { task });
+  btn.disabled = false; btn.textContent = '① 問 AI 經理';
+  if (!r.ok) return $('#suggestBox').innerHTML = `<div class="card" style="border-left:3px solid var(--bad)">⚠️ ${esc(r.error)}</div>`;
+  const s = r.suggestion;
+  if (!s.assigneeId) return $('#suggestBox').innerHTML = `<div class="card suggest">經理：${esc(s.reason)}<br><small class="pill">請到「員工」分頁新增合適角色。</small></div>`;
+  pendingSuggestion = { task, ...s };
+  const emp = state.employees.find(e => e.id === s.assigneeId);
+  $('#suggestBox').innerHTML = `
+    <div class="card suggest">
+      <b>🧑‍💼 經理建議</b><br>
+      分派給：<b style="color:${emp?.color}">${esc(emp?.name || s.assigneeId)}</b><br>
+      <small class="pill">理由：${esc(s.reason)}</small>
+      <ol class="plan">${(s.plan||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ol>
+      <small class="pill">預估 ${s.estimatedMinutes || '?'} 分鐘</small>
+      <div class="row">
+        <button id="btnConfirm">② 確認並執行</button>
+        <button class="ghost" onclick="suggestBox.innerHTML=''">退回</button>
+      </div>
+    </div>`;
+  $('#btnConfirm').onclick = executeTask;
+};
+
+async function executeTask(){
+  const s = pendingSuggestion; if (!s) return;
+  const agent = state.agents.find(a => a.emp.id === s.assigneeId);
+  const emp = state.employees.find(e => e.id === s.assigneeId);
+  $('#suggestBox').innerHTML = '';
+  // 員工走回工位開始工作
+  agent.go(agent.desk.x, agent.desk.y + 34, () => { agent.state = 'working'; });
+  agent.progress = 0;
+  // 進度 UI
+  const box = document.createElement('div');
+  box.className = 'card';
+  box.innerHTML = `<b style="color:${emp.color}">${esc(emp.name)}</b> 執行中…
+    <div class="progress"><i id="pb"></i></div><small class="pill" id="pbTxt">0%</small>`;
+  $('#reportBox').prepend(box);
+  // 進度模擬（等待 API 期間跑到 90%）
+  let pct = 0;
+  const timer = setInterval(() => {
+    pct = Math.min(90, pct + rand(2, 7));
+    agent.progress = pct/100;
+    box.querySelector('#pb').style.width = pct + '%';
+    box.querySelector('#pbTxt').textContent = pct + '%';
+  }, 500);
+  const r = await api('execute', { task: s.task, employeeId: s.assigneeId, plan: s.plan, context: buildContext(), provider: emp.aiProvider || undefined });
+  clearInterval(timer);
+  agent.progress = 1;
+  box.querySelector('#pb').style.width = '100%';
+  box.querySelector('#pbTxt').textContent = '100% ✅ 完成';
+  agent.say(r.ok ? '做完了！' : '出錯了…', 300);
+  setTimeout(() => { agent.progress = -1; agent.state = 'workIdle'; agent.idleTimer = rand(400, 900); }, 1200);
+  if (r.ok){
+    const archItem = { time: new Date().toLocaleString('zh-TW'), task: s.task, employee: r.employee, provider: r.provider || state.provider, result: r.result };
+    saveArchive(archItem);
+    box.innerHTML += `<div class="row"><button class="ghost" id="v">查看成果</button></div>`;
+    box.querySelector('#v').onclick = () => {
+      $('#modalTitle').textContent = `${r.employee} 的工作成果（${r.provider || state.provider}${r.demo?' · 演示':''}）`;
+      $('#report').textContent = r.result;
+      modal.classList.add('show');
+    };
+    $('#modalTitle').textContent = `${r.employee} 的工作成果`;
+    $('#report').textContent = r.result;
+    modal.classList.add('show');
+  } else {
+    box.innerHTML += `<div style="color:var(--bad);font-size:13px;margin-top:6px">⚠️ ${esc(r.error)}</div>`;
+  }
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ================= 檔案上傳（抽出文字作為任務資料） =================
+let attachedFiles = []; // {name, text}
+$('#fileInput').onchange = async e => {
+  for (const f of e.target.files){
+    try{
+      const text = await extractText(f);
+      attachedFiles.push({ name: f.name, text: text.slice(0, 8000) }); // 單檔上限 8000 字
+    }catch(err){ alert(f.name + ' 讀取失敗：' + err.message); }
+  }
+  e.target.value = '';
+  renderFileList();
+};
+function renderFileList(){
+  $('#fileList').innerHTML = attachedFiles.map((f,i) =>
+    `<div class="emp"><small style="flex:1">📄 ${esc(f.name)}（${f.text.length} 字）</small><button class="del" data-i="${i}">✕</button></div>`).join('');
+  document.querySelectorAll('#fileList .del').forEach(b => b.onclick = () => { attachedFiles.splice(+b.dataset.i,1); renderFileList(); });
+}
+async function extractText(f){
+  const ext = f.name.split('.').pop().toLowerCase();
+  if (['txt','md','csv','json','html'].includes(ext)) return await f.text();
+  if (ext === 'pdf'){
+    const pdfjs = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.min.mjs');
+    pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.2.67/pdf.worker.min.mjs';
+    const doc = await pdfjs.getDocument({ data: await f.arrayBuffer() }).promise;
+    let out = '';
+    for (let p = 1; p <= Math.min(doc.numPages, 30); p++){
+      const page = await doc.getPage(p);
+      const tc = await page.getTextContent();
+      out += tc.items.map(i => i.str).join(' ') + '\n';
+    }
+    return out;
+  }
+  if (ext === 'docx'){
+    const mammoth = await import('https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js' /* mammoth UMD */);
+    const r = await mammoth.extractRawText({ arrayBuffer: await f.arrayBuffer() });
+    return r.value;
+  }
+  throw new Error('不支援的格式');
+}
+function buildContext(){
+  const parts = [];
+  const manual = $('#ctxInput').value.trim();
+  if (manual) parts.push(manual);
+  for (const f of attachedFiles) parts.push(`【文件：${f.name}】\n${f.text}`);
+  return parts.join('\n\n---\n\n').slice(0, 20000); // 全部上限 20000 字
+}
+</script>
+<script>
+// ================= 員工管理 =================
+function renderEmpList(){
+  $('#empList').innerHTML = state.employees.map((e, i) => {
+    const a = state.agents.find(x => x.emp.id === e.id);
+    const busy = a && (a.state === 'working' || a.progress >= 0);
+    return `<div class="emp">
+      <div class="dot" style="background:${e.color}"></div>
+      <div style="flex:1"><b>${esc(e.name)}</b><br><small>${esc(e.role || '')}${e.aiProvider ? ' · 用 ' + e.aiProvider : ''}</small></div>
+      <span class="badge ${busy?'busy':'on'}">${busy?'工作中':'待命'}</span>
+      <button class="del" data-edit="${i}" title="修改" style="color:var(--accent)">✎</button>
+      <button class="del" data-i="${i}" title="刪除">✕</button>
+    </div>`;
+  }).join('');
+  document.querySelectorAll('#empList [data-edit]').forEach(b => b.onclick = () => startEditEmp(+b.dataset.edit));
+  document.querySelectorAll('#empList .del[data-i]').forEach(b => b.onclick = () => {
+    state.employees.splice(+b.dataset.i, 1);
+    saveEmps(); rebuildAgents(); renderEmpList();
+  });
+}
+function saveEmps(){ localStorage.setItem('ao_emps', JSON.stringify(state.employees)); }
+
+let editingId = null;
+function startEditEmp(i){
+  const e = state.employees[i];
+  editingId = e.id;
+  $('#newName').value = e.name;
+  $('#newRole').value = e.rolePrompt || e.role || '';
+  $('#newProvider').value = e.aiProvider || '';
+  $('#newColor').value = e.color;
+  $('#btnAddEmp').textContent = '💾 儲存修改';
+  $('#newName').focus();
+}
+$('#btnAddEmp').onclick = () => {
+  const name = $('#newName').value.trim(), role = $('#newRole').value.trim();
+  if (!name) return alert('請輸入員工名稱');
+  if (editingId){
+    const e = state.employees.find(x => x.id === editingId);
+    Object.assign(e, { name, role: role || e.role, rolePrompt: role, aiProvider: $('#newProvider').value, color: $('#newColor').value });
+    const ag = state.agents.find(a => a.emp.id === editingId);
+    if (ag) ag.emp = e;
+    editingId = null; $('#btnAddEmp').textContent = '＋ 新增員工';
+  } else {
+    state.employees.push({ id:'emp_' + Date.now().toString(36), name, role: role || '自訂角色', rolePrompt: role, aiProvider: $('#newProvider').value, color: $('#newColor').value });
+  }
+  $('#newName').value = ''; $('#newRole').value = ''; $('#newProvider').value = '';
+  saveEmps(); rebuildAgents(); renderEmpList();
+};
+
+$('#btnSyncEmp').onclick = async () => {
+  const emps = state.employees.map(e => ({ id:e.id, name:e.name, rolePrompt:e.rolePrompt || e.role, aiProvider:e.aiProvider || '' }));
+  const r = await api('saveEmployees', { employees: emps });
+  alert(r.ok ? '已同步到後端 ✅' : '同步失敗：' + (r.error || '') + '（演示模式下不會真的儲存）');
+};
+
+// ================= 設定 =================
+$('#apiUrl').value = state.apiUrl;
+$('#provider').value = state.provider;
+$('#apiUrl').onchange = e => { state.apiUrl = e.target.value.trim(); localStorage.setItem('ao_apiUrl', state.apiUrl); state.demo = !state.apiUrl; localStorage.setItem('ao_demo', state.demo?'1':'0'); updConn(); };
+$('#provider').onchange = e => { state.provider = e.target.value; localStorage.setItem('ao_provider', state.provider); };
+$('#btnDemo').onclick = () => { state.demo = !state.demo; localStorage.setItem('ao_demo', state.demo?'1':'0'); updConn(); };
+
+function updConn(){
+  $('#connStatus').textContent = state.demo
+    ? '⚠️ 演示模式：本機模擬 AI 回覆（不呼叫後端）'
+    : '已設定後端 URL，按「測試連線」確認狀態';
+}
+$('#btnPing').onclick = async () => {
+  $('#connStatus').textContent = '連線中…';
+  const r = await api('ping');
+  if (r.ok && !r.demo){
+    $('#connStatus').textContent = '✅ 已連線';
+    $('#provStatus').innerHTML = '<h3>供應商金鑰狀態</h3>' + Object.entries(r.providers).map(([id,p]) =>
+      `<div class="emp"><span class="badge ${p.hasKey?'on':''}" style="${p.hasKey?'':'color:var(--bad);border-color:var(--bad)'}">${p.hasKey?'已設定':'未設定'}</span><b>${esc(p.name)}</b> <small class="pill">${id}</small></div>`).join('');
+  } else {
+    $('#connStatus').textContent = r.demo ? '⚠️ 目前為演示模式' : '❌ ' + (r.error || '連線失敗');
+  }
+};
+
+// ================= 分頁 =================
+document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+   $('#pane-' + t.dataset.t).classList.add('active');
+});
+
+// ================= 成果存檔與下載 =================
+function getArchive(){ return JSON.parse(localStorage.getItem('ao_archive') || '[]'); }
+function saveArchive(item){
+  const a = getArchive(); a.unshift(item);
+  localStorage.setItem('ao_archive', JSON.stringify(a.slice(0, 50)));
+  renderArchive();
+}
+function downloadResult(item){
+  const md = `# ${item.task}\n\n- 員工：${item.employee}\n- AI：${item.provider}\n- 完成時間：${item.time}\n\n---\n\n${item.result}\n`;
+  const url = URL.createObjectURL(new Blob([md], { type:'text/markdown;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url; a.download = `${item.time.replace(/[\/:]/g,'-')} ${item.employee}成果.md`;
+  a.click(); URL.revokeObjectURL(url);
+}
+function renderArchive(){
+  const a = getArchive();
+  $('#archiveList').innerHTML = a.length ? a.map((it, i) => `
+    <div class="card">
+      <b>${esc(it.task.slice(0, 40))}${it.task.length > 40 ? '…' : ''}</b><br>
+      <small class="pill">${esc(it.employee)} · ${esc(it.provider)} · ${esc(it.time)}</small>
+      ${it.driveUrl ? `<br><small class="pill">☁️ <a href="${it.driveUrl}" target="_blank" style="color:var(--accent)">已存 Drive</a></small>` : ''}
+      <div class="row">
+        <button class="ghost" data-act="view" data-i="${i}">查看</button>
+        <button class="ghost" data-act="dl" data-i="${i}">⬇ 下載</button>
+        <button class="ghost" data-act="drive" data-i="${i}">☁️ 存 Drive</button>
+        <button class="ghost" data-act="relay" data-i="${i}">🔁 接力</button>
+        <button class="del" data-act="del" data-i="${i}">✕</button>
+      </div>
+    </div>`).join('') : '<div class="card pill">尚無成果，交付任務後會自動存檔在這裡。</div>';
+  document.querySelectorAll('#archiveList [data-act]').forEach(b => b.onclick = async () => {
+    const list = getArchive(), i = +b.dataset.i;
+    if (b.dataset.act === 'view'){
+      $('#modalTitle').textContent = `${list[i].employee} 的工作成果（${list[i].time}）`;
+      $('#report').textContent = list[i].result;
+      modal.classList.add('show');
+    } else if (b.dataset.act === 'dl') downloadResult(list[i]);
+    else if (b.dataset.act === 'drive'){
+      b.disabled = true; b.textContent = '備份中…';
+      const r = await api('archive', list[i]);
+      if (r.ok){ list[i].driveUrl = r.fileUrl; localStorage.setItem('ao_archive', JSON.stringify(list)); renderArchive(); }
+      else { alert('備份失敗：' + (r.error || '')); b.disabled = false; b.textContent = '☁️ 存 Drive'; }
+    }
+    else if (b.dataset.act === 'relay') startRelay(list[i]);
+    else { list.splice(i, 1); localStorage.setItem('ao_archive', JSON.stringify(list)); renderArchive(); }
+  });
+}
+
+// ================= 員工接力协作 =================
+let relaySource = null;
+function startRelay(item){
+  relaySource = item;
+  const others = state.employees.filter(e => e.name !== item.employee);
+  $('#relayEmp').innerHTML = others.map(e => `<option value="${e.id}">${esc(e.name)}</option>`).join('');
+  $('#relayTask').value = `審閱並優化以下成果：${item.task}`;
+  relayModal.classList.add('show');
+}
+$('#btnRelayGo').onclick = () => {
+  const empId = $('#relayEmp').value, task = $('#relayTask').value.trim() || '接力處理';
+  const emp = state.employees.find(e => e.id === empId);
+  if (!emp) return;
+  relayModal.classList.remove('show');
+  relayExecute(emp, task, relaySource);
+};
+async function relayExecute(emp, task, prev){
+  const agent = state.agents.find(a => a.emp.id === emp.id);
+  // 動畫：先走去傾兩句，再返工位開工
+  agent.say('收到，交給我！', 200);
+  agent.go(agent.desk.x, agent.desk.y + 34, () => { agent.state = 'working'; });
+  agent.progress = 0;
+  const box = document.createElement('div');
+  box.className = 'card';
+  box.innerHTML = `🔁 接力：<b style="color:${emp.color}">${esc(emp.name)}</b> 執行中…
+    <div class="progress"><i id="pb"></i></div><small class="pill" id="pbTxt">0%</small>`;
+  $('#reportBox').prepend(box);
+  let pct = 0;
+  const timer = setInterval(() => {
+    pct = Math.min(90, pct + rand(2, 7));
+    agent.progress = pct/100;
+    box.querySelector('#pb').style.width = pct + '%';
+    box.querySelector('#pbTxt').textContent = pct + '%';
+  }, 500);
+  const ctx = `上一棒由「${prev.employee}」完成的成果：\n${prev.result}\n\n請基於以上成果繼續處理。`;
+  const r = await api('execute', { task, employeeId: emp.id, context: ctx, provider: emp.aiProvider || undefined });
+  clearInterval(timer);
+  agent.progress = 1;
+  box.querySelector('#pb').style.width = '100%';
+  box.querySelector('#pbTxt').textContent = '100% ✅ 完成';
+  agent.say(r.ok ? '接力完成！' : '出錯了…', 300);
+  setTimeout(() => { agent.progress = -1; agent.state = 'workIdle'; agent.idleTimer = rand(400, 900); }, 1200);
+  if (r.ok){
+    saveArchive({ time: new Date().toLocaleString('zh-TW'), task: `[接力] ${task}`, employee: r.employee, provider: r.provider || state.provider, result: r.result });
+    box.innerHTML += `<div class="row"><button class="ghost" id="v">查看成果</button></div>`;
+    box.querySelector('#v').onclick = () => {
+      $('#modalTitle').textContent = `${r.employee} 的接力成果`;
+      $('#report').textContent = r.result;
+      modal.classList.add('show');
+    };
+  } else {
+    box.innerHTML += `<div style="color:var(--bad);font-size:13px;margin-top:6px">⚠️ ${esc(r.error)}</div>`;
+  }
+}
+
+renderEmpList(); updConn(); renderArchive();
+</script>
+</body>
+</html>
