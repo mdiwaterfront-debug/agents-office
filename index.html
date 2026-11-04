@@ -38,16 +38,17 @@
   .plan{padding-left:18px;color:var(--dim);font-size:13px}
   .progress{height:8px;background:var(--panel);border-radius:99px;overflow:hidden;margin-top:8px}
   .progress>i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--good));width:0%;transition:width .4s}
-  #report{font-size:17px;line-height:1.9;max-height:62vh;overflow-y:auto;color:var(--txt)}
+  #report{font-size:20px;line-height:2.0;max-height:66vh;overflow-y:auto;color:var(--txt)}
   #report b,#report strong{color:#fff}
-  #report h4{font-size:19px;margin:16px 0 8px;color:#cfe0ff;border-bottom:1px solid var(--line);padding-bottom:4px}
-  #report .li{display:block;padding-left:14px;position:relative;margin:4px 0}
-  #report .li::before{content:'•';position:absolute;left:0;color:var(--accent)}
+  #report h4{font-size:24px;margin:20px 0 10px;color:#cfe0ff;border-bottom:1px solid var(--line);padding-bottom:6px}
+  #report .li{display:block;padding-left:18px;position:relative;margin:6px 0}
+  #report .li::before{content:'•';position:absolute;left:0;color:var(--accent);font-size:22px}
   #report a{color:var(--accent)}
-  #report hr{border:none;border-top:1px solid var(--line);margin:12px 0}
+  #report hr{border:none;border-top:1px solid var(--line);margin:14px 0}
   .modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:9}
   .modal.show{display:flex}
-  .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:24px 28px;width:min(880px,95vw);max-height:92vh;overflow-y:auto}
+  .modal .box{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:28px 34px;width:min(1150px,96vw);max-height:94vh;overflow-y:auto}
+  .modal .box h3{font-size:22px}
   .pill{font-size:12px;color:var(--dim)}
   .del{background:none;border:none;color:var(--bad);cursor:pointer;font-size:16px;padding:2px 6px}
   label{font-size:13px;color:var(--dim);display:block;margin:10px 0 4px}
@@ -75,6 +76,10 @@
     <label>上傳文件交給員工整理/修改（txt / md / csv / json / html / pdf / docx）</label>
     <input id="fileInput" type="file" multiple accept=".txt,.md,.csv,.json,.html,.pdf,.docx" style="padding:6px">
     <div id="fileList"></div>
+    <label>分派方式</label>
+    <select id="assignMode">
+      <option value="">🧑‍💼 由 AI 經理分派（預設）</option>
+    </select>
     <div class="row">
       <button id="btnAssign">① 問 AI 經理</button>
     </div>
@@ -371,31 +376,49 @@ function demoApi(action, p){
 
 // ================= 任務流程 =================
 let pendingSuggestion = null;
+function refreshAssignMode(){
+  const sel = $('#assignMode'), cur = sel.value;
+  sel.innerHTML = '<option value="">🧑‍💼 由 AI 經理分派（預設）</option>' +
+    state.employees.map(e => `<option value="${e.id}">👉 指定：${esc(e.name)}</option>`).join('');
+  sel.value = state.employees.some(e => e.id === cur) ? cur : '';
+}
+function renderSuggest(){
+  const s = pendingSuggestion;
+  const opts = state.employees.map(e => `<option value="${e.id}" ${e.id === s.assigneeId ? 'selected' : ''}>${esc(e.name)}</option>`).join('');
+  const emp = state.employees.find(e => e.id === s.assigneeId);
+  $('#suggestBox').innerHTML = `
+    <div class="card suggest">
+      <b>${s.manual ? '👉 已指定員工' : '🧑‍💼 經理建議'}</b><br>
+      分派給：<select id="sugEmp" style="width:auto;display:inline-block;padding:4px 8px">${opts}</select><br>
+      ${s.reason ? `<small class="pill">理由：${esc(s.reason)}</small>` : ''}
+      ${s.plan ? `<ol class="plan">${s.plan.map(x=>`<li>${esc(x)}</li>`).join('')}</ol>` : ''}
+      ${s.estimatedMinutes ? `<small class="pill">預估 ${s.estimatedMinutes} 分鐘</small>` : ''}
+      <div class="row">
+        <button id="btnConfirm">② 確認並執行</button>
+        <button class="ghost" onclick="suggestBox.innerHTML=''">退回</button>
+      </div>
+    </div>`;
+  $('#sugEmp').onchange = e => { pendingSuggestion.assigneeId = e.target.value; };
+  $('#btnConfirm').onclick = executeTask;
+}
 $('#btnAssign').onclick = async () => {
   const task = $('#taskInput').value.trim();
   if (!task) return alert('請先輸入任務');
+  const forced = $('#assignMode').value;
+  if (forced){ // 指定員工：跳過經理，直接出確認卡
+    pendingSuggestion = { task, assigneeId: forced, manual: true, reason: '', plan: null };
+    renderSuggest();
+    return;
+  }
   const btn = $('#btnAssign'); btn.disabled = true; btn.textContent = '經理思考中…';
   $('#suggestBox').innerHTML = '';
   const r = await api('assign', { task });
   btn.disabled = false; btn.textContent = '① 問 AI 經理';
   if (!r.ok) return $('#suggestBox').innerHTML = `<div class="card" style="border-left:3px solid var(--bad)">⚠️ ${esc(r.error)}</div>`;
   const s = r.suggestion;
-  if (!s.assigneeId) return $('#suggestBox').innerHTML = `<div class="card suggest">經理：${esc(s.reason)}<br><small class="pill">請到「員工」分頁新增合適角色。</small></div>`;
+  if (!s.assigneeId) return $('#suggestBox').innerHTML = `<div class="card suggest">經理：${esc(s.reason)}<br><small class="pill">請到「員工」分頁新增合適角色，或喺上面「分派方式」指定現有員工。</small></div>`;
   pendingSuggestion = { task, ...s };
-  const emp = state.employees.find(e => e.id === s.assigneeId);
-  $('#suggestBox').innerHTML = `
-    <div class="card suggest">
-      <b>🧑‍💼 經理建議</b><br>
-      分派給：<b style="color:${emp?.color}">${esc(emp?.name || s.assigneeId)}</b><br>
-      <small class="pill">理由：${esc(s.reason)}</small>
-      <ol class="plan">${(s.plan||[]).map(x=>`<li>${esc(x)}</li>`).join('')}</ol>
-      <small class="pill">預估 ${s.estimatedMinutes || '?'} 分鐘</small>
-      <div class="row">
-        <button id="btnConfirm">② 確認並執行</button>
-        <button class="ghost" onclick="suggestBox.innerHTML=''">退回</button>
-      </div>
-    </div>`;
-  $('#btnConfirm').onclick = executeTask;
+  renderSuggest();
 };
 
 async function executeTask(){
@@ -506,7 +529,7 @@ function renderEmpList(){
   document.querySelectorAll('#empList [data-edit]').forEach(b => b.onclick = () => startEditEmp(+b.dataset.edit));
   document.querySelectorAll('#empList .del[data-i]').forEach(b => b.onclick = () => {
     state.employees.splice(+b.dataset.i, 1);
-    saveEmps(); rebuildAgents(); renderEmpList();
+    saveEmps(); rebuildAgents(); renderEmpList(); refreshAssignMode();
   });
 }
 function saveEmps(){ localStorage.setItem('ao_emps', JSON.stringify(state.employees)); }
@@ -710,7 +733,7 @@ $('#btnFollowUp').onclick = () => {
   relayExecute(emp, inst, currentItem);
 };
 
-renderEmpList(); updConn(); renderArchive();
+renderEmpList(); updConn(); renderArchive(); refreshAssignMode();
 </script>
 </body>
 </html>
