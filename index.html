@@ -46,6 +46,7 @@
   .del{background:none;border:none;color:var(--bad);cursor:pointer;font-size:16px;padding:2px 6px}
   label{font-size:13px;color:var(--dim);display:block;margin:10px 0 4px}
 </style>
+<base target="_blank">
 </head>
 <body>
 <div id="stage">
@@ -102,8 +103,10 @@
 
   <div class="pane" id="pane-settings">
     <h3>後端連線</h3>
-    <label>Apps Script Web App URL（/exec）</label>
-    <input id="apiUrl" placeholder="https://script.google.com/macros/s/…/exec">
+    <div id="urlBlock">
+      <label>Apps Script Web App URL（/exec）</label>
+      <input id="apiUrl" placeholder="https://script.google.com/macros/s/…/exec">
+    </div>
     <label>預設 AI 供應商</label>
     <select id="provider">
       <option value="deepseek">DeepSeek（經理預設）</option>
@@ -141,6 +144,11 @@
 <div class="modal" id="modal"><div class="box">
   <h3 id="modalTitle" style="margin-top:0">工作成果</h3>
   <div id="report"></div>
+  <label>下一步指示（交返畀同一員工繼續修改/強化，例：再精簡一半、改成表格、補充國際新聞）</label>
+  <div class="row">
+    <textarea id="followUp" style="flex:1;min-height:44px" placeholder="輸入指示…"></textarea>
+    <button id="btnFollowUp" style="align-self:flex-end">▶ 下一步</button>
+  </div>
   <div class="row" style="justify-content:flex-end"><button onclick="modal.classList.remove('show')">關閉</button></div>
 </div></div>
 <script>
@@ -304,12 +312,24 @@ loop();
 </script>
 <script>
 // ================= 後端 API =================
+// 喺 Apps Script 環境（同一專案）→ 直接用 google.script.run，唔使 URL、唔使 CORS
+const GAS_MODE = !!(window.google && google.script && google.script.run);
+function gasCall(body){
+  return new Promise(res => {
+    google.script.run
+      .withSuccessHandler(res)
+      .withFailureHandler(e => res({ ok:false, error: String(e && e.message || e) }))
+      .apiRun(body);
+  });
+}
 async function api(action, payload = {}){
+  const body = { action, provider: state.provider, ...payload };
+  if (GAS_MODE) return gasCall(body);
   if (state.demo || !state.apiUrl) return demoApi(action, payload);
   try{
     const r = await fetch(state.apiUrl, {
       method:'POST', headers:{'Content-Type':'text/plain'}, // 避免 CORS preflight
-      body: JSON.stringify({ action, provider: state.provider, ...payload })
+      body: JSON.stringify(body)
     });
     return await r.json();
   }catch(e){ return { ok:false, error:'連線失敗：' + e.message }; }
@@ -405,14 +425,8 @@ async function executeTask(){
     const archItem = { time: new Date().toLocaleString('zh-TW'), task: s.task, employee: r.employee, provider: r.provider || state.provider, result: r.result };
     saveArchive(archItem);
     box.innerHTML += `<div class="row"><button class="ghost" id="v">查看成果</button></div>`;
-    box.querySelector('#v').onclick = () => {
-      $('#modalTitle').textContent = `${r.employee} 的工作成果（${r.provider || state.provider}${r.demo?' · 演示':''}）`;
-      $('#report').textContent = r.result;
-      modal.classList.add('show');
-    };
-    $('#modalTitle').textContent = `${r.employee} 的工作成果`;
-    $('#report').textContent = r.result;
-    modal.classList.add('show');
+    box.querySelector('#v').onclick = () => showReport(archItem, `${r.employee} 的工作成果（${r.provider || state.provider}${r.demo?' · 演示':''}）`);
+    showReport(archItem, `${r.employee} 的工作成果`);
   } else {
     box.innerHTML += `<div style="color:var(--bad);font-size:13px;margin-top:6px">⚠️ ${esc(r.error)}</div>`;
   }
@@ -472,9 +486,12 @@ function renderEmpList(){
   $('#empList').innerHTML = state.employees.map((e, i) => {
     const a = state.agents.find(x => x.emp.id === e.id);
     const busy = a && (a.state === 'working' || a.progress >= 0);
+    const desc = (e.role || '').replace(/\s+/g, ' ').trim();
+    const short = desc.length > 16 ? desc.slice(0, 16) + '…' : desc;
+    const full = e.rolePrompt || e.role || '';
     return `<div class="emp">
       <div class="dot" style="background:${e.color}"></div>
-      <div style="flex:1"><b>${esc(e.name)}</b><br><small>${esc(e.role || '')}${e.aiProvider ? ' · 用 ' + e.aiProvider : ''}</small></div>
+      <div style="flex:1;min-width:0"><b>${esc(e.name)}</b><br><small title="${esc(full)}" style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:help">${esc(short)}${e.aiProvider ? ' · ' + e.aiProvider : ''}</small></div>
       <span class="badge ${busy?'busy':'on'}">${busy?'工作中':'待命'}</span>
       <button class="del" data-edit="${i}" title="修改" style="color:var(--accent)">✎</button>
       <button class="del" data-i="${i}" title="刪除">✕</button>
@@ -529,6 +546,11 @@ $('#provider').onchange = e => { state.provider = e.target.value; localStorage.s
 $('#btnDemo').onclick = () => { state.demo = !state.demo; localStorage.setItem('ao_demo', state.demo?'1':'0'); updConn(); };
 
 function updConn(){
+  if (typeof GAS_MODE !== 'undefined' && GAS_MODE){
+    $('#urlBlock').style.display = 'none';
+    $('#connStatus').textContent = '✅ Apps Script 直連模式（同一專案，無需設定 URL）';
+    return;
+  }
   $('#connStatus').textContent = state.demo
     ? '⚠️ 演示模式：本機模擬 AI 回覆（不呼叫後端）'
     : '已設定後端 URL，按「測試連線」確認狀態';
@@ -584,11 +606,8 @@ function renderArchive(){
     </div>`).join('') : '<div class="card pill">尚無成果，交付任務後會自動存檔在這裡。</div>';
   document.querySelectorAll('#archiveList [data-act]').forEach(b => b.onclick = async () => {
     const list = getArchive(), i = +b.dataset.i;
-    if (b.dataset.act === 'view'){
-      $('#modalTitle').textContent = `${list[i].employee} 的工作成果（${list[i].time}）`;
-      $('#report').textContent = list[i].result;
-      modal.classList.add('show');
-    } else if (b.dataset.act === 'dl') downloadResult(list[i]);
+    if (b.dataset.act === 'view') showReport(list[i], `${list[i].employee} 的工作成果（${list[i].time}）`);
+    else if (b.dataset.act === 'dl') downloadResult(list[i]);
     else if (b.dataset.act === 'drive'){
       b.disabled = true; b.textContent = '備份中…';
       const r = await api('archive', list[i]);
@@ -643,17 +662,32 @@ async function relayExecute(emp, task, prev){
   agent.say(r.ok ? '接力完成！' : '出錯了…', 300);
   setTimeout(() => { agent.progress = -1; agent.state = 'workIdle'; agent.idleTimer = rand(400, 900); }, 1200);
   if (r.ok){
-    saveArchive({ time: new Date().toLocaleString('zh-TW'), task: `[接力] ${task}`, employee: r.employee, provider: r.provider || state.provider, result: r.result });
+    const relayItem = { time: new Date().toLocaleString('zh-TW'), task: `[接力] ${task}`, employee: r.employee, provider: r.provider || state.provider, result: r.result };
+    saveArchive(relayItem);
     box.innerHTML += `<div class="row"><button class="ghost" id="v">查看成果</button></div>`;
-    box.querySelector('#v').onclick = () => {
-      $('#modalTitle').textContent = `${r.employee} 的接力成果`;
-      $('#report').textContent = r.result;
-      modal.classList.add('show');
-    };
+    box.querySelector('#v').onclick = () => showReport(relayItem, `${r.employee} 的接力成果`);
   } else {
     box.innerHTML += `<div style="color:var(--bad);font-size:13px;margin-top:6px">⚠️ ${esc(r.error)}</div>`;
   }
 }
+
+// ================= 成果視窗（含下一步指示） =================
+let currentItem = null;
+function showReport(item, title){
+  currentItem = item;
+  $('#modalTitle').textContent = title || `${item.employee} 的工作成果`;
+  $('#report').textContent = item.result;
+  $('#followUp').value = '';
+  modal.classList.add('show');
+}
+$('#btnFollowUp').onclick = () => {
+  const inst = $('#followUp').value.trim();
+  if (!inst || !currentItem) return alert('請輸入指示');
+  const emp = state.employees.find(e => e.name === currentItem.employee);
+  if (!emp) return alert('找不到該員工（可能已刪除），請用「接力」揀其他員工');
+  modal.classList.remove('show');
+  relayExecute(emp, inst, currentItem);
+};
 
 renderEmpList(); updConn(); renderArchive();
 </script>
